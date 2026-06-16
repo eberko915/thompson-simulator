@@ -122,7 +122,7 @@ export function SummaryStats({ data }: Props) {
 
   const fmt = (v: number | null) => (v === null ? '—' : v.toFixed(3));
   const fmtSignal = (v: number | null) =>
-    v === null ? 'Not reached' : `${v} pp`;
+    v === null ? 'Not reached' : `${v}`;
 
   return (
     <div className="flex flex-col gap-4">

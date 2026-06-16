@@ -83,7 +83,7 @@ export function Controls({ value, onChange, onRun, running }: Props) {
       {/* ── Signal levels ── */}
       <fieldset>
         <legend className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-          Signal level (pp)
+          Signal level (concentration)
         </legend>
         <div className="flex flex-wrap gap-4">
           {SIGNAL_OPTIONS.map(s => (

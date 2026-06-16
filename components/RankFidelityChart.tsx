@@ -26,7 +26,7 @@ function ChartTooltip({ active, payload, label }: TooltipContentProps<ValueType,
   return (
     <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs shadow-md dark:border-zinc-700 dark:bg-zinc-900">
       <p className="mb-1 font-semibold text-zinc-700 dark:text-zinc-300">
-        Signal: {label} pp
+        Signal: {label}
       </p>
       {raw && (
         <p className="text-zinc-500 dark:text-zinc-400">
@@ -78,7 +78,7 @@ export function RankFidelityChart({ data }: Props) {
             ticks={SIGNAL_TICKS}
             tickFormatter={v => `${v}`}
             label={{
-              value: 'Signal (pp)',
+              value: 'Signal',
               position: 'insideBottomRight',
               offset: -4,
               fontSize: 11,

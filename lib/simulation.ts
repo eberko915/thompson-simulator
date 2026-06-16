@@ -2,12 +2,6 @@ import jStat from 'jstat';
 
 // ---------------------------------------------------------------------------
 // Digamma  ψ(x) = d/dx ln Γ(x)
-// Recurrence  ψ(x) = ψ(x+1) - 1/x  lifts x to ≥ 6, then the asymptotic
-// series (Stirling-type) converges fast enough for 1e-8 accuracy.
-//
-// Asymptotic:  ψ(x) ~ ln x - 1/(2x) - Σ B_{2n} / (2n · x^{2n})
-// Coefficients: n=1..7, B_2=1/6, B_4=-1/30, B_6=1/42, B_8=-1/30,
-//               B_10=5/66, B_12=-691/2730, B_14=7/6
 // ---------------------------------------------------------------------------
 export function digamma(x: number): number {
   if (x <= 0) throw new RangeError(`digamma requires x > 0, got ${x}`);
@@ -24,9 +18,6 @@ export function digamma(x: number): number {
 
 // ---------------------------------------------------------------------------
 // Trigamma  ψ'(x) = d²/dx² ln Γ(x)
-// Recurrence  ψ'(x) = ψ'(x+1) + 1/x²  lifts x to ≥ 6, then:
-//
-// Asymptotic:  ψ'(x) ~ 1/x + 1/(2x²) + Σ B_{2n} / x^{2n+1}
 // ---------------------------------------------------------------------------
 export function trigamma(x: number): number {
   if (x <= 0) throw new RangeError(`trigamma requires x > 0, got ${x}`);
@@ -62,7 +53,7 @@ export interface GroupConfig {
 
 export interface SimulationParams {
   nRounds: number;
-  /** Observable effect size (learnedProb - baseProb) passed by the caller. */
+  /** Beta concentration parameter: α = prob * signal, β = (1−prob) * signal. */
   signal: number;
   baseProb: number;
   learnedProb: number;
@@ -74,163 +65,130 @@ export interface SimulationResult {
   groupId: string;
   nLabels: number;
   nLearned: number;
-  /** Analytical geometric mean of converged Beta posteriors via digamma. */
+  /** Analytical E[geometric mean] via digamma at the given signal level. */
   expectedGeomean: number;
-  /** Precision@nLearned: fraction of truly learned labels in the top-nLearned positions. */
+  /** Raw win rate: fraction of rounds won on uncorrected log-geomean. */
   rawPct: number;
-  /** Inter-group win rate after correction (correctedWins / (nGroups - 1)). */
+  /** Corrected win rate: fraction of rounds won on corrected score. */
   correctedPct: number;
-  /** Number of other groups this group outscores on raw geometric mean. */
+  /** Total rounds won on raw log-geomean. */
   rawWins: number;
-  /** Number of other groups this group outscores after applying the correction. */
+  /** Total rounds won on corrected score. */
   correctedWins: number;
 }
 
 // ---------------------------------------------------------------------------
-// Analytical expected geometric mean using digamma
+// Analytical expected log-geometric-mean for a group.
 //
-// For X ~ Beta(α, β):  E[ln X] = ψ(α) - ψ(α + β)
-// We approximate each label's converged posterior by assuming equal splits of
-// Thompson traffic, yielding Beta(1 + p·r, 1 + (1-p)·r) after r rounds/label.
+// For X ~ Beta(α, β):  E[ln X] = ψ(α) − ψ(α + β)
+// With α = prob * signal and β = (1−prob) * signal → α+β = signal.
+//
+// Returns exp(avgELog) as the expected geometric mean.
 // ---------------------------------------------------------------------------
-function computeExpectedGeomean(
+export function computeExpectedGeomean(
   nLabels: number,
   nLearned: number,
   learnedProb: number,
   baseProb: number,
-  nRounds: number,
+  signal: number,
 ): number {
-  const r = nRounds / nLabels; // expected rounds per label under uniform traffic
-
-  const alphaL = 1 + learnedProb * r,  betaL = 1 + (1 - learnedProb) * r;
-  const alphaB = 1 + baseProb   * r,   betaB = 1 + (1 - baseProb)    * r;
-
-  const eLogLearned = digamma(alphaL) - digamma(alphaL + betaL);
-  const eLogBase    = digamma(alphaB) - digamma(alphaB + betaB);
-
+  const eLogLearned = digamma(learnedProb * signal) - digamma(signal);
+  const eLogBase    = digamma(baseProb    * signal) - digamma(signal);
   const avgLog = (nLearned * eLogLearned + (nLabels - nLearned) * eLogBase) / nLabels;
   return Math.exp(avgLog);
 }
 
 // ---------------------------------------------------------------------------
-// Correction methods (applied to the group-level raw geometric mean)
+// Per-round correction applied to the group's log-geometric-mean sample.
+//
+// sqrt_n: re-scales noise around the expected log-geomean by √n, equalising
+//         variance across group sizes so that size alone does not determine wins.
 // ---------------------------------------------------------------------------
 function applyCorrection(
-  rawGeomean: number,
-  nLearned: number,
-  posteriorMeans: number[],
+  logGeomean: number,
+  mu: number,
+  nLabels: number,
   method: SimulationParams['correctionMethod'],
-  /** log of the analytically-expected geomean — used as the reference μ for sqrt_n */
-  expectedLogGeomean: number,
 ): number {
   switch (method) {
     case 'sqrt_n': {
-      // Log-space correction matching the Python notebook formula:
-      //   corrected = μ + √n · (log(geomean) − μ)
-      // where μ = E[log(geomean)] for a group of this size.
-      // Equalises within-group variance across sizes so groups compete on signal.
-      const noise = Math.log(rawGeomean) - expectedLogGeomean;
-      return expectedLogGeomean + Math.sqrt(posteriorMeans.length) * noise;
+      // mu + √n · (log_gm − mu)  [matches Python notebook formula]
+      return mu + Math.sqrt(nLabels) * (logGeomean - mu);
     }
-
-    case 'trigamma': {
-      // Fisher-information-based correction via trigamma variance proxy
-      const variance = trigamma(Math.max(nLearned, 1) + 1);
-      return rawGeomean / Math.sqrt(variance);
-    }
-
-    case 'rank': {
-      // Rank-based: precision@nLearned (fraction of truly learned labels in top-nLearned)
-      // Labels at index < nLearned are truly learned (matching how trueProbs are built).
-      const sorted = posteriorMeans
-        .map((p, i) => ({ p, i }))
-        .sort((a, b) => b.p - a.p);
-      const hits = sorted.slice(0, Math.max(nLearned, 1)).filter(({ i }) => i < nLearned).length;
-      return hits / Math.max(nLearned, 1);
-    }
-
+    // trigamma and rank are not meaningful in this static-sampling regime;
+    // fall through to raw so they can still be selected without crashing.
     default:
-      return rawGeomean;
+      return logGeomean;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Main simulation
+// Main simulation  (matches notebook approach: direct Beta sampling, no TS)
+//
+// Each round independently draws one Beta(α,β) sample per label per group,
+// computes the log-geometric-mean, applies the correction, and crowns the
+// argmax winner.  Win counts accumulate over nRounds.
 // ---------------------------------------------------------------------------
 export function runSimulation(params: SimulationParams): SimulationResult[] {
-  const { nRounds, baseProb, learnedProb, correctionMethod, groups } = params;
+  const { nRounds, signal, baseProb, learnedProb, correctionMethod, groups } = params;
   const nGroups = groups.length;
 
-  // --- Per-group Thompson sampling ---
-  const scratch = groups.map(({ id, nLabels, nLearned }) => {
-    // Beta(1,1) priors for every label
-    const alpha = new Array<number>(nLabels).fill(1);
-    const beta  = new Array<number>(nLabels).fill(1);
+  const baseAlpha    = baseProb    * signal;
+  const baseBeta     = (1 - baseProb)    * signal;
+  const learnedAlpha = learnedProb * signal;
+  const learnedBeta  = (1 - learnedProb) * signal;
 
-    // First nLearned labels are truly learned
-    const trueProbs = Array.from({ length: nLabels }, (_, i) =>
-      i < nLearned ? learnedProb : baseProb,
-    );
+  // Pre-compute per-group expected log-geomean (mu) and expected geomean.
+  const mu = groups.map(({ nLabels, nLearned }) => {
+    const eLogLearned = digamma(learnedAlpha) - digamma(signal);
+    const eLogBase    = digamma(baseAlpha)    - digamma(signal);
+    return (nLearned * eLogLearned + (nLabels - nLearned) * eLogBase) / nLabels;
+  });
+  const expectedGeomeans = mu.map(Math.exp);
 
-    for (let round = 0; round < nRounds; round++) {
-      // Thompson sampling: draw one sample per arm
-      let maxSample = -Infinity;
-      let winner    = 0;
+  const rawWins       = new Array<number>(nGroups).fill(0);
+  const correctedWins = new Array<number>(nGroups).fill(0);
+
+  for (let round = 0; round < nRounds; round++) {
+    let bestRaw = -Infinity, bestCorrected = -Infinity;
+    let winnerRaw = 0, winnerCorrected = 0;
+
+    for (let gi = 0; gi < nGroups; gi++) {
+      const { nLabels, nLearned } = groups[gi];
+
+      // Draw one Beta sample per label and accumulate log-sum.
+      let logSum = 0;
       for (let j = 0; j < nLabels; j++) {
-        const s = BetaSampler.sample(alpha[j], beta[j]);
-        if (s > maxSample) { maxSample = s; winner = j; }
+        const a = j < nLearned ? learnedAlpha : baseAlpha;
+        const b = j < nLearned ? learnedBeta  : baseBeta;
+        logSum += Math.log(Math.max(BetaSampler.sample(a, b), Number.EPSILON));
       }
+      const logGm = logSum / nLabels;
 
-      // Bernoulli reward → update posterior
-      const reward = Math.random() < trueProbs[winner] ? 1 : 0;
-      alpha[winner] += reward;
-      beta[winner]  += 1 - reward;
+      if (logGm > bestRaw) { bestRaw = logGm; winnerRaw = gi; }
+
+      const score = applyCorrection(logGm, mu[gi], nLabels, correctionMethod);
+      if (score > bestCorrected) { bestCorrected = score; winnerCorrected = gi; }
     }
 
-    const posteriorMeans = alpha.map((a, i) => a / (a + beta[i]));
+    rawWins[winnerRaw]++;
+    correctedWins[winnerCorrected]++;
+  }
 
-    // Geometric mean of all posterior means (guarded against log(0))
-    const logSum = posteriorMeans.reduce((s, p) => s + Math.log(Math.max(p, Number.EPSILON)), 0);
-    const rawGeomean = Math.exp(logSum / nLabels);
-
-    // Precision@nLearned (within-group quality)
-    const sorted = [...posteriorMeans]
-      .map((p, i) => ({ p, i }))
-      .sort((a, b) => b.p - a.p);
-    const hits = sorted.slice(0, Math.max(nLearned, 1)).filter(({ i }) => i < nLearned).length;
-    const rawPct = hits / Math.max(nLearned, 1);
-
-    const expectedGeomean = computeExpectedGeomean(nLabels, nLearned, learnedProb, baseProb, nRounds);
-    const correctedScore  = applyCorrection(rawGeomean, nLearned, posteriorMeans, correctionMethod, Math.log(expectedGeomean));
-
-    return { id, nLabels, nLearned, rawGeomean, correctedScore, rawPct, expectedGeomean };
-  });
-
-  // --- Inter-group win counts ---
-  return scratch.map((g, i) => {
-    let rawWins = 0, correctedWins = 0;
-    for (let j = 0; j < nGroups; j++) {
-      if (j === i) continue;
-      if (g.rawGeomean    > scratch[j].rawGeomean)    rawWins++;
-      if (g.correctedScore > scratch[j].correctedScore) correctedWins++;
-    }
-    const denominator  = Math.max(nGroups - 1, 1);
-    return {
-      groupId:       g.id,
-      nLabels:       g.nLabels,
-      nLearned:      g.nLearned,
-      expectedGeomean: g.expectedGeomean,
-      rawPct:        g.rawPct,
-      correctedPct:  correctedWins / denominator,
-      rawWins,
-      correctedWins,
-    };
-  });
+  return groups.map((g, i) => ({
+    groupId:         g.id,
+    nLabels:         g.nLabels,
+    nLearned:        g.nLearned,
+    expectedGeomean: expectedGeomeans[i],
+    rawWins:         rawWins[i],
+    correctedWins:   correctedWins[i],
+    rawPct:          rawWins[i] / nRounds,
+    correctedPct:    correctedWins[i] / nRounds,
+  }));
 }
 
 // ---------------------------------------------------------------------------
-// Spearman ρ
-// Ranks are averaged over ties (fractional ranking).
+// Spearman ρ  (fractional ranking, averaged ties)
 // ---------------------------------------------------------------------------
 export function computeSpearman(x: number[], y: number[]): number {
   if (x.length !== y.length) throw new Error('Arrays must have equal length');
@@ -244,7 +202,7 @@ export function computeSpearman(x: number[], y: number[]): number {
     while (i < n) {
       let j = i;
       while (j < n && indexed[j].v === indexed[i].v) j++;
-      const avg = (i + j - 1) / 2; // 0-based average rank
+      const avg = (i + j - 1) / 2;
       for (let k = i; k < j; k++) ranks[indexed[k].i] = avg;
       i = j;
     }
@@ -254,8 +212,7 @@ export function computeSpearman(x: number[], y: number[]): number {
   const rx = fractionalRanks(x);
   const ry = fractionalRanks(y);
 
-  // Pearson r on ranks
-  const meanR = (n - 1) / 2; // mean of 0-based ranks
+  const meanR = (n - 1) / 2;
   let num = 0, denX = 0, denY = 0;
   for (let i = 0; i < n; i++) {
     const dx = rx[i] - meanR;
