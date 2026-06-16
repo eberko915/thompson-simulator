@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import type { GroupConfig, SimulationParams } from '../lib/simulation';
 
 const SIGNAL_OPTIONS = [4, 8, 16, 40, 100] as const;
@@ -73,6 +73,23 @@ export function Controls({ value, onChange, onRun, running }: Props) {
       }
       return next;
     }));
+  }
+
+  const [bulkCount,    setBulkCount]    = useState(10);
+  const [bulkNLabels,  setBulkNLabels]  = useState(2);
+  const [bulkNLearned, setBulkNLearned] = useState(1);
+
+  function bulkAdd() {
+    const next = [...value.groups];
+    for (let i = 0; i < bulkCount; i++) {
+      const id = `group_${String(next.length + 1).padStart(2, '0')}`;
+      next.push({ id, nLabels: bulkNLabels, nLearned: Math.min(bulkNLearned, bulkNLabels) });
+    }
+    set('groups', next);
+  }
+
+  function clearGroups() {
+    set('groups', [{ id: 'group_01', nLabels: 2, nLearned: 1 }]);
   }
 
   const canRun = !running && value.signals.length > 0 && value.groups.length > 0;
@@ -187,14 +204,25 @@ export function Controls({ value, onChange, onRun, running }: Props) {
       {/* ── Group configuration ── */}
       <div>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Groups</span>
-          <button
-            type="button"
-            onClick={addGroup}
-            className="text-xs px-2.5 py-1 rounded-md bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-300 transition-colors"
-          >
-            + Add row
-          </button>
+          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            Groups <span className="font-normal text-zinc-400">({value.groups.length})</span>
+          </span>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={addGroup}
+              className="text-xs px-2.5 py-1 rounded-md bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-300 transition-colors"
+            >
+              + Add row
+            </button>
+            <button
+              type="button"
+              onClick={clearGroups}
+              className="text-xs px-2.5 py-1 rounded-md bg-zinc-100 hover:bg-red-100 dark:bg-zinc-700 dark:hover:bg-red-900/30 text-zinc-500 hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400 transition-colors"
+            >
+              Clear
+            </button>
+          </div>
         </div>
 
         <div className="rounded-md border border-zinc-200 dark:border-zinc-700 overflow-hidden">
@@ -259,6 +287,48 @@ export function Controls({ value, onChange, onRun, running }: Props) {
               </div>
             </div>
           ))}
+        </div>
+
+        {/* ── Bulk add ── */}
+        <div className="mt-2 flex items-center gap-1.5">
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={bulkCount}
+            onChange={e => setBulkCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
+            className="w-14 rounded border border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-2 py-1 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <span className="text-xs text-zinc-400 shrink-0">groups,</span>
+          <select
+            value={bulkNLabels}
+            onChange={e => {
+              const n = parseInt(e.target.value, 10);
+              setBulkNLabels(n);
+              setBulkNLearned(l => Math.min(l, n));
+            }}
+            className="w-14 rounded border border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-1 py-1 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+          <span className="text-xs text-zinc-400 shrink-0">labels,</span>
+          <select
+            value={bulkNLearned}
+            onChange={e => setBulkNLearned(parseInt(e.target.value, 10))}
+            className="w-14 rounded border border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-1 py-1 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            {Array.from({ length: bulkNLabels + 1 }, (_, n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+          <span className="text-xs text-zinc-400 shrink-0">learned</span>
+          <button
+            type="button"
+            onClick={bulkAdd}
+            className="ml-auto shrink-0 text-xs px-2.5 py-1 rounded-md bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-600 dark:text-blue-400 font-medium transition-colors"
+          >
+            + Add {bulkCount}
+          </button>
         </div>
       </div>
 
