@@ -9,7 +9,6 @@ const CORRECTION_METHODS: { value: SimulationParams['correctionMethod']; label: 
   { value: 'none',     label: 'None' },
   { value: 'sqrt_n',   label: '√n' },
   { value: 'trigamma', label: 'Trigamma' },
-  { value: 'rank',     label: 'Rank' },
 ];
 
 export interface ControlsValue {
