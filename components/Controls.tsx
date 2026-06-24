@@ -6,9 +6,8 @@ import type { GroupConfig, SimulationParams } from '../lib/simulation';
 const SIGNAL_OPTIONS = [4, 8, 16, 40, 100] as const;
 
 const CORRECTION_METHODS: { value: SimulationParams['correctionMethod']; label: string }[] = [
-  { value: 'none',     label: 'None' },
-  { value: 'sqrt_n',   label: '√n' },
-  { value: 'trigamma', label: 'Trigamma' },
+  { value: 'none',   label: 'None' },
+  { value: 'sqrt_n', label: '√n' },
 ];
 
 export interface ControlsValue {
